@@ -451,6 +451,8 @@ void proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGr
                     singleproxy["ws-opts"]["headers"]["Host"] = x.Host;
                 break;
             }
+            if (!x.Alpn.empty())
+                singleproxy["alpn"] = x.Alpn;
             break;
         case ProxyType::Snell:
             if (x.SnellVersion >= 4)

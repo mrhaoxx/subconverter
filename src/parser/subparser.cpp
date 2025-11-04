@@ -98,12 +98,13 @@ void httpConstruct(Proxy &node, const std::string &group, const std::string &rem
     node.TLSSecure = tls;
 }
 
-void trojanConstruct(Proxy &node, const std::string &group, const std::string &remarks, const std::string &server, const std::string &port, const std::string &password, const std::string &network, const std::string &host, const std::string &path, bool tlssecure, tribool udp, tribool tfo, tribool scv, tribool tls13, const std::string& underlying_proxy)
+void trojanConstruct(Proxy &node, const std::string &group, const std::string &remarks, const std::string &server, const std::string &port, const std::string &password, const std::string &network, const std::string &host, const std::string &path, const string_array& alpn, bool tlssecure, tribool udp, tribool tfo, tribool scv, tribool tls13, const std::string& underlying_proxy)
 {
     commonConstruct(node, ProxyType::Trojan, group, remarks, server, port, udp, tfo, scv, tls13, underlying_proxy);
     node.Password = password;
     node.Host = host;
     node.TLSSecure = tlssecure;
+    node.Alpn = alpn;
     node.TransferProtocol = network.empty() ? "tcp" : network;
     node.Path = path;
 }
@@ -156,7 +157,7 @@ void hysteriaConstruct(
     const std::string &recv_window,
     const std::string &disable_mtu_discovery,
     const std::string &hop_interval,
-    const std::string &alpn,
+    const string_array &alpn,
     tribool tfo,
     tribool scv,
     const std::string &underlying_proxy
@@ -204,10 +205,11 @@ void hysteriaConstruct(
     node.HopInterval = to_int(hop_interval);
     if (!alpn.empty())
     {
-        node.Alpn = StringArray {alpn};
+        node.Alpn = alpn;
     }
 }
 
+void hysteria2Construct(Proxy &node, const std::string &group, const std::string &remarks, const std::string &server, const std::string &port,const std::string &up, const std::string &down, const std::string &password, const std::string &obfs, const std::string &obfs_password, const std::string &sni, const std::string &fingerprint, const string_array &alpn, const std::string &ca, const std::string &ca_str, const std::string &cwnd, tribool tfo, tribool scv, const std::string &underlying_proxy) {
 void hysteria2Construct(
     Proxy &node, 
     const std::string &group,
@@ -242,7 +244,7 @@ void hysteria2Construct(
     node.Fingerprint = fingerprint;
     if (!alpn.empty())
     {
-        node.Alpn = StringArray {alpn};
+        node.Alpn = alpn;
     }
     node.Ca = ca;
     node.CaStr = caStr;
@@ -874,6 +876,7 @@ void explodeTrojan(std::string trojan, Proxy &node)
     tribool tfo, scv;
     trojan.erase(0, 9);
     string_size pos = trojan.rfind('#');
+    string_array alpn;
 
     if(pos != std::string::npos)
     {
@@ -899,6 +902,12 @@ void explodeTrojan(std::string trojan, Proxy &node)
     scv = getUrlArg(addition, "allowInsecure");
     group = urlDecode(getUrlArg(addition, "group"));
 
+    auto alpn_str = getUrlArg(addition, "alpn");
+    if(!alpn_str.empty())
+    {
+        alpn = split(alpn_str, ",");
+    }
+
     if(getUrlArg(addition, "ws") == "1")
     {
         path = getUrlArg(addition, "wspath");
@@ -919,7 +928,7 @@ void explodeTrojan(std::string trojan, Proxy &node)
     if(group.empty())
         group = TROJAN_DEFAULT_GROUP;
 
-    trojanConstruct(node, group, remark, server, port, psk, network, host, path, true, tribool(), tfo, scv);
+    trojanConstruct(node, group, remark, server, port, psk, network, host, path, alpn, true, tribool(), tfo, scv);
 }
 
 void explodeQuan(const std::string &quan, Proxy &node)
@@ -1076,7 +1085,7 @@ void explodeNetch(std::string netch, Proxy &node)
         tls = GetMember(json, "TLSSecure");
         if(group.empty())
             group = TROJAN_DEFAULT_GROUP;
-        trojanConstruct(node, group, remark, address, port, password, transprot, host, path, tls == "true", udp, tfo, scv);
+        trojanConstruct(node, group, remark, address, port, password, transprot, host, path, {}, tls == "true", udp, tfo, scv);
         break;
     case "Snell"_hash:
         obfs = GetMember(json, "OBFS");
@@ -1099,9 +1108,9 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes)
     std::string protocol, protoparam, obfs, obfsparam; //ssr
     std::string user; //socks
     std::string ip, ipv6, private_key, public_key, mtu; //wireguard
-    std::string ports, obfs_protocol, up, up_speed, down, down_speed, auth, auth_str,/* obfs, sni,*/ fingerprint, ca, ca_str, recv_window_conn, recv_window, disable_mtu_discovery, hop_interval, alpn; //hysteria
+    std::string ports, obfs_protocol, up, up_speed, down, down_speed, auth, auth_str,/* obfs, sni,*/ fingerprint, ca, ca_str, recv_window_conn, recv_window, disable_mtu_discovery, hop_interval; //hysteria
     std::string obfs_password, cwnd; //hysteria2
-    string_array dns_server;
+    string_array dns_server, alpn;
     tribool udp, tfo, scv;
     Node singleproxy;
     uint32_t index = nodes.size();
@@ -1277,6 +1286,13 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes)
             singleproxy["password"] >>= password;
             singleproxy["sni"] >>= host;
             singleproxy["network"] >>= net;
+            if (singleproxy["alpn"].IsSequence())
+                singleproxy["alpn"] >>= alpn;
+            else {
+                std::string alpn_str;
+                singleproxy["alpn"] >>= alpn_str;
+                alpn.push_back(alpn_str);
+            }
             switch(hash_(net))
             {
             case "grpc"_hash:
@@ -1291,7 +1307,7 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes)
                 break;
             }
 
-            trojanConstruct(node, group, ps, server, port, password, net, host, path, true, udp, tfo, scv, tribool(),  underlying_proxy);
+            trojanConstruct(node, group, ps, server, port, password, net, host, path, alpn, true, udp, tfo, scv, tribool(),  underlying_proxy);
             break;
         case "snell"_hash:
             group = SNELL_DEFAULT_GROUP;
@@ -1331,9 +1347,12 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes)
             singleproxy["sni"] >>= sni;
             singleproxy["fingerprint"] >>= fingerprint;
             if (singleproxy["alpn"].IsSequence())
-                singleproxy["alpn"][0] >>= alpn;
-            else
                 singleproxy["alpn"] >>= alpn;
+            else {
+                std::string alpn_str;
+                singleproxy["alpn"] >>= alpn_str;
+                alpn.push_back(alpn_str);
+            }
             singleproxy["ca"] >>= ca;
             singleproxy["ca-str"] >>= ca_str;
             singleproxy["recv-window-conn"] >>= recv_window_conn;
@@ -1358,9 +1377,12 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes)
             singleproxy["sni"] >>= sni;
             singleproxy["fingerprint"] >>= fingerprint;
             if (singleproxy["alpn"].IsSequence())
-                singleproxy["alpn"][0] >>= alpn;
-            else
                 singleproxy["alpn"] >>= alpn;
+            else {
+                std::string alpn_str;
+                singleproxy["alpn"] >>= alpn_str;
+                alpn.push_back(alpn_str);
+            }
             singleproxy["ca"] >>= ca;
             singleproxy["ca-str"] >>= ca_str;
             singleproxy["cwnd"] >>= cwnd;
@@ -1506,11 +1528,12 @@ void explodeKitsunebi(std::string kit, Proxy &node)
 
 
 void explodeStdHysteria2(std::string hysteria2, Proxy &node) {
-    std::string add, port, password, host, insecure, up, down, alpn, obfs, obfs_password, remarks, sni, fingerprint;
+    std::string add, port, password, host, insecure, up, down, obfs, obfs_password, remarks, sni, fingerprint;
     std::string addition;
     tribool scv;
     hysteria2 = hysteria2.substr(12);
     string_size pos;
+    string_array alpn;
 
     pos = hysteria2.rfind("#");
     if (pos != hysteria2.npos) {
@@ -1543,7 +1566,7 @@ void explodeStdHysteria2(std::string hysteria2, Proxy &node) {
     up = getUrlArg(addition, "up");
     down = getUrlArg(addition, "down");
     // the alpn is not supported officially yet
-    alpn = getUrlArg(addition, "alpn");
+    alpn = split(getUrlArg(addition, "alpn"), ",");
     obfs = getUrlArg(addition, "obfs");
     obfs_password = getUrlArg(addition, "obfs-password");
     sni = getUrlArg(addition, "sni");
@@ -1551,7 +1574,7 @@ void explodeStdHysteria2(std::string hysteria2, Proxy &node) {
     if (remarks.empty())
         remarks = add + ":" + port;
 
-    hysteria2Construct(node, HYSTERIA2_DEFAULT_GROUP, remarks, add, port, port, up, down, password, obfs, obfs_password, sni, fingerprint, "", "", "", "", "", tribool(), scv, "");
+    hysteria2Construct(node, HYSTERIA2_DEFAULT_GROUP, remarks, add, port, up, down, password, obfs, obfs_password, sni, fingerprint, alpn, "", "", "", tribool(), scv, "");
     return;
 }
 
@@ -1930,7 +1953,7 @@ bool explodeSurge(std::string surge, std::vector<Proxy> &nodes)
                 }
             }
 
-            trojanConstruct(node, TROJAN_DEFAULT_GROUP, remarks, server, port, password, "", host, "", true, udp, tfo, scv);
+            trojanConstruct(node, TROJAN_DEFAULT_GROUP, remarks, server, port, password, "", host, "", {},true, udp, tfo, scv);
             break;
         case "snell"_hash:
             server = trim(configs[1]);
@@ -2252,7 +2275,7 @@ bool explodeSurge(std::string surge, std::vector<Proxy> &nodes)
                 if(remarks.empty())
                     remarks = server + ":" + port;
 
-                trojanConstruct(node, TROJAN_DEFAULT_GROUP, remarks, server, port, password, "", host, "", tls == "true", udp, tfo, scv, tls13);
+                trojanConstruct(node, TROJAN_DEFAULT_GROUP, remarks, server, port, password, "", host, "", {}, tls == "true", udp, tfo, scv, tls13);
                 break;
             case "http"_hash: //quantumult x style http links
                 server = trim(configs[0].substr(0, configs[0].rfind(':')));
