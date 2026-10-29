@@ -139,6 +139,10 @@ struct Proxy
     tribool SecureMode;
     tribool LatencyFirst;
     tribool MagicDns;
+    String EasyTierIPv6;
+    /// EasyTier's own options as they were written (key, text; a list joined by ","), typed back by
+    /// EasyTierOptionKinds on export.
+    std::vector<std::pair<String, String>> EasyTierOptions;
 
     String Ports;
     String Up;
@@ -170,5 +174,19 @@ struct Proxy
 #define HYSTERIA_DEFAULT_GROUP "HysteriaProvider"
 #define HYSTERIA2_DEFAULT_GROUP "Hysteria2Provider"
 #define EASYTIER_DEFAULT_GROUP "EasyTierProvider"
+
+/// EasyTier's options flowd reads (flowd's EasyTier options design §2): key and kind, 'b' bool,
+/// 'i' integer, 's' string, 'l' list of strings.
+inline const std::vector<std::pair<const char *, char>> EasyTierOptionKinds = {
+    {"default-protocol", 's'}, {"disable-p2p", 'b'}, {"p2p-only", 'b'}, {"lazy-p2p", 'b'},
+    {"need-p2p", 'b'}, {"disable-udp-hole-punching", 'b'}, {"disable-tcp-hole-punching", 'b'},
+    {"disable-sym-hole-punching", 'b'}, {"disable-upnp", 'b'}, {"relay-all-peer-rpc", 'b'},
+    {"disable-relay-data", 'b'}, {"stun-servers", 'l'}, {"enable-encryption", 'b'},
+    {"encryption-algorithm", 's'}, {"private-mode", 'b'}, {"compression", 's'},
+    {"enable-kcp-proxy", 'b'}, {"disable-kcp-input", 'b'}, {"disable-relay-kcp", 'b'},
+    {"enable-quic-proxy", 'b'}, {"disable-quic-input", 'b'}, {"disable-relay-quic", 'b'},
+    {"multi-thread", 'b'}, {"multi-thread-count", 'i'}, {"recv-limit", 'i'}, {"enable-ipv6", 'b'},
+    {"dns-zone", 's'}, {"udp-broadcast-relay", 'b'},
+};
 
 #endif // PROXY_H_INCLUDED

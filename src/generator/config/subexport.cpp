@@ -550,6 +550,31 @@ void proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGr
                 singleproxy["mtu"] = x.Mtu;
             if(!x.UDP.is_undef() && !x.UDP.get())
                 singleproxy["udp"] = false;
+            if(!x.EasyTierIPv6.empty())
+                singleproxy["ipv6"] = x.EasyTierIPv6;
+            for(const auto &[key, value] : x.EasyTierOptions)
+            {
+                char kind = 's';
+                for(const auto &[k, c] : EasyTierOptionKinds)
+                    if(key == k)
+                        kind = c;
+                switch(kind)
+                {
+                case 'b':
+                    singleproxy[key] = value == "true";
+                    break;
+                case 'i':
+                    singleproxy[key] = to_int(value);
+                    break;
+                case 'l':
+                    for(auto &item : split(value, ","))
+                        if(!item.empty())
+                            singleproxy[key].push_back(item);
+                    break;
+                default:
+                    singleproxy[key] = value;
+                }
+            }
             break;
         case ProxyType::Hysteria:
             singleproxy["type"] = "hysteria";

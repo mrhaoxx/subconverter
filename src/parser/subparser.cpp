@@ -1404,6 +1404,22 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes)
             node.LatencyFirst = safe_as<std::string>(singleproxy["latency-first"]);
             node.MagicDns = safe_as<std::string>(singleproxy["magic-dns"]);
             node.Mtu = to_int(safe_as<std::string>(singleproxy["mtu"]));
+            singleproxy["ipv6"] >>= node.EasyTierIPv6;
+            for(const auto &[key, kind] : EasyTierOptionKinds)
+            {
+                const Node &v = singleproxy[key];
+                if(!v.IsDefined() || v.IsNull())
+                    continue;
+                if(kind == 'l')
+                {
+                    string_array items;
+                    if(v.IsSequence())
+                        v >>= items;
+                    node.EasyTierOptions.emplace_back(key, join(items, ","));
+                }
+                else if(v.IsScalar())
+                    node.EasyTierOptions.emplace_back(key, v.as<std::string>());
+            }
             break;
         case "hysteria"_hash:
             group = HYSTERIA_DEFAULT_GROUP;
