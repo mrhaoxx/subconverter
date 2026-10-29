@@ -561,10 +561,16 @@ void proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGr
                 switch(kind)
                 {
                 case 'b':
-                    singleproxy[key] = value == "true";
+                    if(value == "true" || value == "false")
+                        singleproxy[key] = value == "true";
+                    else
+                        singleproxy[key] = value;  // not a boolean: flowd names the key
                     break;
                 case 'i':
-                    singleproxy[key] = to_int(value);
+                    if(!value.empty() && std::all_of(value.begin(), value.end(), ::isdigit) && value.size() <= 18)
+                        singleproxy[key] = std::stoll(value);
+                    else
+                        singleproxy[key] = value;  // not a number: flowd names the key
                     break;
                 case 'l':
                     for(auto &item : split(value, ","))

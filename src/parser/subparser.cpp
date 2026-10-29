@@ -1418,7 +1418,15 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes)
                     node.EasyTierOptions.emplace_back(key, join(items, ","));
                 }
                 else if(v.IsScalar())
-                    node.EasyTierOptions.emplace_back(key, v.as<std::string>());
+                {
+                    // yes/True/on are booleans to YAML: keep the value, not its spelling. One
+                    // that is no boolean stays as written, for flowd to report.
+                    bool b = false;
+                    if(kind == 'b' && YAML::convert<bool>::decode(v, b))
+                        node.EasyTierOptions.emplace_back(key, b ? "true" : "false");
+                    else
+                        node.EasyTierOptions.emplace_back(key, v.as<std::string>());
+                }
             }
             break;
         case "hysteria"_hash:
