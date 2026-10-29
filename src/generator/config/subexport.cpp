@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <map>
 #include <iostream>
 #include <numeric>
 #include <cmath>
@@ -228,11 +229,26 @@ void groupGenerate(const std::string &rule, std::vector<Proxy> &nodelist, string
     }
 }
 
+// A WireGuard entry's (or peer's) allowed-ips and reserved, as Clash lists.
+static void wireguardLists(YAML::Node &n, const std::string &allowed, const string_array &reserved)
+{
+    for(auto &a : split(allowed, ","))
+    {
+        std::string ip = trim(a);
+        if(!ip.empty())
+            n["allowed-ips"].push_back(ip);
+    }
+    for(const auto &r : reserved)
+        n["reserved"].push_back(to_int(r));
+}
+
 void proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupConfigs &extra_proxy_group, bool clashR, extra_settings &ext)
 {
     YAML::Node proxies, original_groups;
     std::vector<Proxy> nodelist;
     string_array remarks_list;
+    std::vector<YAML::Node> chained;                    // entries with an underlying-proxy
+    std::map<std::string, std::string> final_names;     // name before the export → after it
     /// proxies style
     bool proxy_block = false, proxy_compact = false, group_block = false, group_compact = false;
     switch(hash_(ext.clash_proxies_style))
@@ -266,6 +282,7 @@ void proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGr
 
         std::string type = getProxyTypeName(x.Type);
         std::string pluginopts = replaceAllDistinct(x.PluginOption, ";", "&");
+        std::string before_export = x.Remark;
         if(ext.append_proxy_type)
             x.Remark = "[" + type + "] " + x.Remark;
 
@@ -472,17 +489,67 @@ void proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGr
             break;
         case ProxyType::WireGuard:
             singleproxy["type"] = "wireguard";
-            singleproxy["public-key"] = x.PublicKey;
             singleproxy["private-key"] = x.PrivateKey;
-            singleproxy["ip"] = x.SelfIP;
+            if(!x.SelfIP.empty())
+                singleproxy["ip"] = x.SelfIP;
             if(!x.SelfIPv6.empty())
                 singleproxy["ipv6"] = x.SelfIPv6;
-            if(!x.PreSharedKey.empty())
-                singleproxy["preshared-key"] = x.PreSharedKey;
             if(!x.DnsServers.empty())
                 singleproxy["dns"] = x.DnsServers;
             if(x.Mtu > 0)
                 singleproxy["mtu"] = x.Mtu;
+            if(x.KeepAlive > 0)
+                singleproxy["persistent-keepalive"] = x.KeepAlive;
+            if(!x.RemoteDnsResolve.is_undef())
+                singleproxy["remote-dns-resolve"] = x.RemoteDnsResolve.get();
+            if(x.WireGuardPeers.empty())
+            {
+                singleproxy["public-key"] = x.PublicKey;
+                if(!x.PreSharedKey.empty())
+                    singleproxy["pre-shared-key"] = x.PreSharedKey;
+                wireguardLists(singleproxy, x.AllowedIPs, x.Reserved);
+            }
+            else
+            {
+                // The "peers" form: no server of its own.
+                singleproxy.remove("server");
+                singleproxy.remove("port");
+                for(const WireGuardPeer &p : x.WireGuardPeers)
+                {
+                    YAML::Node peer;
+                    peer["server"] = p.Hostname;
+                    peer["port"] = p.Port;
+                    peer["public-key"] = p.PublicKey;
+                    if(!p.PreSharedKey.empty())
+                        peer["pre-shared-key"] = p.PreSharedKey;
+                    wireguardLists(peer, join(p.AllowedIPs, ", "), p.Reserved);
+                    singleproxy["peers"].push_back(peer);
+                }
+            }
+            break;
+        case ProxyType::EasyTier:
+            singleproxy["type"] = "easytier";
+            singleproxy.remove("server");
+            singleproxy.remove("port");
+            singleproxy["network-name"] = x.NetworkName;
+            singleproxy["network-secret"] = x.NetworkSecret;
+            singleproxy["peers"] = x.EasyTierPeers;
+            if(!x.EasyTierIPv4.empty())
+                singleproxy["ipv4"] = x.EasyTierIPv4;
+            if(!x.Dhcp.is_undef())
+                singleproxy["dhcp"] = x.Dhcp.get();
+            if(!x.EasyTierHostname.empty())
+                singleproxy["hostname"] = x.EasyTierHostname;
+            if(!x.SecureMode.is_undef())
+                singleproxy["secure-mode"] = x.SecureMode.get();
+            if(!x.LatencyFirst.is_undef())
+                singleproxy["latency-first"] = x.LatencyFirst.get();
+            if(!x.MagicDns.is_undef())
+                singleproxy["magic-dns"] = x.MagicDns.get();
+            if(x.Mtu > 0)
+                singleproxy["mtu"] = x.Mtu;
+            if(!x.UDP.is_undef() && !x.UDP.get())
+                singleproxy["udp"] = false;
             break;
         case ProxyType::Hysteria:
             singleproxy["type"] = "hysteria";
@@ -565,8 +632,15 @@ void proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGr
 
         // UDP is not supported yet in clash using snell
         // sees in https://dreamacro.github.io/clash/configuration/outbound.html#snell
-        if(udp && x.Type != ProxyType::Snell)
+        if(udp && x.Type != ProxyType::Snell && x.Type != ProxyType::EasyTier)
             singleproxy["udp"] = true;
+        if(!x.UnderlyingProxy.empty() && x.Type != ProxyType::EasyTier)
+        {
+            singleproxy["underlying-proxy"] = x.UnderlyingProxy;
+            chained.emplace_back(singleproxy);
+        }
+        if(!before_export.empty())
+            final_names.emplace(before_export, x.Remark);
         if(!tfo.is_undef())
             singleproxy["tfo"] = tfo.get();
         if(proxy_block)
@@ -576,6 +650,14 @@ void proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGr
         proxies.push_back(singleproxy);
         remarks_list.emplace_back(x.Remark);
         nodelist.emplace_back(x);
+    }
+
+    // The type prefix and de-duplication above renamed nodes after their references were set.
+    for(YAML::Node &n : chained)
+    {
+        auto it = final_names.find(n["underlying-proxy"].as<std::string>());
+        if(it != final_names.end())
+            n["underlying-proxy"] = it->second;
     }
 
     if(proxy_compact)

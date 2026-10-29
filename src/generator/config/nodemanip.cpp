@@ -1,3 +1,4 @@
+#include <map>
 #include <string>
 #include <vector>
 #include <iostream>
@@ -477,6 +478,20 @@ void preprocessNodes(std::vector<Proxy> &nodes, extra_settings &ext)
         if(ext.add_emoji)
             x.Remark = addEmoji(x, ext.emoji_array, ext);
     });
+
+    // underlying-proxy names a node as its subscription did: follow that node to its new name.
+    // A name no node had (a group of the subscription, a node filtered out) stays as it is.
+    std::map<std::string, std::string> renamed;
+    for(const Proxy &x : nodes)
+        if(!x.OriginalRemark.empty())
+            renamed.emplace(x.OriginalRemark, x.Remark);
+    for(Proxy &x : nodes)
+    {
+        if(x.UnderlyingProxy.empty())
+            continue;
+        if(auto it = renamed.find(x.UnderlyingProxy); it != renamed.end())
+            x.UnderlyingProxy = it->second;
+    }
 
     if(ext.sort_flag)
     {

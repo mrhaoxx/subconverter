@@ -22,7 +22,8 @@ enum class ProxyType
     SOCKS5,
     WireGuard,
     Hysteria,
-    Hysteria2
+    Hysteria2,
+    EasyTier
 };
 
 inline String getProxyTypeName(ProxyType type)
@@ -51,10 +52,23 @@ inline String getProxyTypeName(ProxyType type)
         return "Hysteria";
     case ProxyType::Hysteria2:
         return "Hysteria2";
+    case ProxyType::EasyTier:
+        return "EasyTier";
     default:
         return "Unknown";
     }
 }
+
+/// One peer of a WireGuard node in the Clash "peers" list form.
+struct WireGuardPeer
+{
+    String Hostname;
+    uint16_t Port = 0;
+    String PublicKey;
+    String PreSharedKey;
+    StringArray AllowedIPs;
+    StringArray Reserved;
+};
 
 struct Proxy
 {
@@ -94,6 +108,9 @@ struct Proxy
     tribool TLS13;
 
     String UnderlyingProxy;
+    /// The name the node had in its subscription, before renaming: what other nodes'
+    /// underlying-proxy refer to.
+    String OriginalRemark;
 
     uint16_t SnellVersion = 0;
     String ServerName;
@@ -109,6 +126,19 @@ struct Proxy
     uint16_t KeepAlive = 0;
     String TestUrl;
     String ClientId;
+    StringArray Reserved;                 // WireGuard: the 3 reserved bytes
+    tribool RemoteDnsResolve;             // WireGuard: resolve names through the tunnel's DNS
+    std::vector<WireGuardPeer> WireGuardPeers;  // WireGuard: the "peers" list form
+
+    String NetworkName;                   // EasyTier
+    String NetworkSecret;
+    StringArray EasyTierPeers;
+    String EasyTierIPv4;
+    String EasyTierHostname;
+    tribool Dhcp;
+    tribool SecureMode;
+    tribool LatencyFirst;
+    tribool MagicDns;
 
     String Ports;
     String Up;
@@ -139,5 +169,6 @@ struct Proxy
 #define WG_DEFAULT_GROUP "WireGuardProvider"
 #define HYSTERIA_DEFAULT_GROUP "HysteriaProvider"
 #define HYSTERIA2_DEFAULT_GROUP "Hysteria2Provider"
+#define EASYTIER_DEFAULT_GROUP "EasyTierProvider"
 
 #endif // PROXY_H_INCLUDED

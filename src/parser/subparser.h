@@ -73,7 +73,7 @@ void hysteria2Construct(
     const std::string &obfs_password,
     const std::string &sni,
     const std::string &fingerprint,
-    const std::string &alpn,
+    const string_array &alpn,
     const std::string &ca,
     const std::string &caStr,
     const std::string &cwnd,

@@ -32,6 +32,7 @@ void commonConstruct(Proxy &node, ProxyType type, const std::string &group, cons
     node.Remark = remarks;
     node.Hostname = server;
     node.UnderlyingProxy = underlying_proxy;
+    node.OriginalRemark = remarks;
     node.Port = to_int(port);
     node.UDP = udp;
     node.TCPFastOpen = tfo;
@@ -209,7 +210,6 @@ void hysteriaConstruct(
     }
 }
 
-void hysteria2Construct(Proxy &node, const std::string &group, const std::string &remarks, const std::string &server, const std::string &port,const std::string &up, const std::string &down, const std::string &password, const std::string &obfs, const std::string &obfs_password, const std::string &sni, const std::string &fingerprint, const string_array &alpn, const std::string &ca, const std::string &ca_str, const std::string &cwnd, tribool tfo, tribool scv, const std::string &underlying_proxy) {
 void hysteria2Construct(
     Proxy &node, 
     const std::string &group,
@@ -224,7 +224,7 @@ void hysteria2Construct(
     const std::string &obfs_password,
     const std::string &sni,
     const std::string &fingerprint,
-    const std::string &alpn,
+    const string_array &alpn,
     const std::string &ca,
     const std::string &caStr,
     const std::string &cwnd,
@@ -1100,6 +1100,27 @@ void explodeNetch(std::string netch, Proxy &node)
     }
 }
 
+// A WireGuard entry's (or peer's) allowed-ips and reserved, each a list or a "a, b" string.
+static void wireguardPeerLists(const Node &n, std::string &allowed, string_array &reserved)
+{
+    if(n["allowed-ips"].IsSequence())
+    {
+        string_array list;
+        n["allowed-ips"] >>= list;
+        allowed = join(list, ", ");
+    }
+    else if(n["allowed-ips"].IsDefined() && !n["allowed-ips"].IsNull())
+        n["allowed-ips"] >>= allowed;
+    reserved.clear();
+    if(n["reserved"].IsSequence())
+        n["reserved"] >>= reserved;
+    else if(n["reserved"].IsDefined() && !n["reserved"].IsNull())
+    {
+        for(auto &r : split(safe_as<std::string>(n["reserved"]), ","))
+            reserved.emplace_back(trim(r));
+    }
+}
+
 void explodeClash(Node yamlnode, std::vector<Proxy> &nodes)
 {
     std::string proxytype, ps, server, port, cipher, group, password, underlying_proxy; //common
@@ -1124,7 +1145,11 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes)
         singleproxy["server"] >>= server;
         singleproxy["port"] >>= port;
         singleproxy["underlying-proxy"] >>= underlying_proxy;
-        if(port.empty() || port == "0")
+        if(underlying_proxy.empty())
+            singleproxy["dialer-proxy"] >>= underlying_proxy;  // mihomo's name for it
+        // EasyTier has no server, and WireGuard's "peers" form keeps them in the list.
+        if((port.empty() || port == "0") && proxytype != "easytier" &&
+           !(proxytype == "wireguard" && singleproxy["peers"].IsSequence()))
             continue;
         udp = safe_as<std::string>(singleproxy["udp"]);
         tfo = safe_as<std::string>(singleproxy["fast-open"]);
@@ -1324,11 +1349,61 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes)
             singleproxy["private-key"] >>= private_key;
             singleproxy["dns"] >>= dns_server;
             singleproxy["mtu"] >>= mtu;
-            singleproxy["preshared-key"] >>= password;
+            singleproxy["pre-shared-key"] >>= password;
+            if(password.empty())
+                singleproxy["preshared-key"] >>= password;
             singleproxy["ip"] >>= ip;
             singleproxy["ipv6"] >>= ipv6;
-
-            wireguardConstruct(node, group, ps, server, port, ip, ipv6, private_key, public_key, password, dns_server, mtu, "0", "", "", udp, underlying_proxy);
+            {
+                std::string keepalive;
+                singleproxy["persistent-keepalive"] >>= keepalive;
+                wireguardConstruct(node, group, ps, server, port, ip, ipv6, private_key, public_key, password, dns_server, mtu, keepalive.empty() ? "0" : keepalive, "", "", udp, underlying_proxy);
+            }
+            node.RemoteDnsResolve = safe_as<std::string>(singleproxy["remote-dns-resolve"]);
+            wireguardPeerLists(singleproxy, node.AllowedIPs, node.Reserved);
+            if(singleproxy["peers"].IsSequence())
+            {
+                for(const auto &p : singleproxy["peers"])
+                {
+                    WireGuardPeer peer;
+                    p["server"] >>= peer.Hostname;
+                    peer.Port = to_int(safe_as<std::string>(p["port"]));
+                    p["public-key"] >>= peer.PublicKey;
+                    p["pre-shared-key"] >>= peer.PreSharedKey;
+                    if(peer.PreSharedKey.empty())
+                        p["preshared-key"] >>= peer.PreSharedKey;
+                    std::string allowed;
+                    wireguardPeerLists(p, allowed, peer.Reserved);
+                    peer.AllowedIPs = split(allowed, ",");
+                    for(auto &a : peer.AllowedIPs)
+                        a = trim(a);
+                    node.WireGuardPeers.emplace_back(std::move(peer));
+                }
+                // The first peer stands for the node where a target has one peer per node.
+                if(!node.WireGuardPeers.empty() && node.Hostname.empty())
+                {
+                    const WireGuardPeer &first = node.WireGuardPeers.front();
+                    node.Hostname = first.Hostname;
+                    node.Port = first.Port;
+                    node.PublicKey = first.PublicKey;
+                    node.PreSharedKey = first.PreSharedKey;
+                }
+            }
+            break;
+        case "easytier"_hash:
+            group = EASYTIER_DEFAULT_GROUP;
+            commonConstruct(node, ProxyType::EasyTier, group, ps, "", "0", udp, tribool(), tribool(), tribool(), "");
+            singleproxy["network-name"] >>= node.NetworkName;
+            singleproxy["network-secret"] >>= node.NetworkSecret;
+            if(singleproxy["peers"].IsSequence())
+                singleproxy["peers"] >>= node.EasyTierPeers;
+            singleproxy["ipv4"] >>= node.EasyTierIPv4;
+            singleproxy["hostname"] >>= node.EasyTierHostname;
+            node.Dhcp = safe_as<std::string>(singleproxy["dhcp"]);
+            node.SecureMode = safe_as<std::string>(singleproxy["secure-mode"]);
+            node.LatencyFirst = safe_as<std::string>(singleproxy["latency-first"]);
+            node.MagicDns = safe_as<std::string>(singleproxy["magic-dns"]);
+            node.Mtu = to_int(safe_as<std::string>(singleproxy["mtu"]));
             break;
         case "hysteria"_hash:
             group = HYSTERIA_DEFAULT_GROUP;
@@ -1388,7 +1463,7 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes)
             singleproxy["cwnd"] >>= cwnd;
             singleproxy["hop-interval"] >>= hop_interval;
 
-            hysteria2Construct(node, group, ps, server, port, ports, up, down, password, obfs, obfs_password, sni, fingerprint, ca, ca_str, cwnd, alpn, hop_interval, tfo, scv, underlying_proxy);
+            hysteria2Construct(node, group, ps, server, port, ports, up, down, password, obfs, obfs_password, sni, fingerprint, alpn, ca, ca_str, cwnd, hop_interval, tfo, scv, underlying_proxy);
             break;
 
         default:
@@ -1574,7 +1649,7 @@ void explodeStdHysteria2(std::string hysteria2, Proxy &node) {
     if (remarks.empty())
         remarks = add + ":" + port;
 
-    hysteria2Construct(node, HYSTERIA2_DEFAULT_GROUP, remarks, add, port, up, down, password, obfs, obfs_password, sni, fingerprint, alpn, "", "", "", tribool(), scv, "");
+    hysteria2Construct(node, HYSTERIA2_DEFAULT_GROUP, remarks, add, port, "", up, down, password, obfs, obfs_password, sni, fingerprint, alpn, "", "", "", "", tribool(), scv, "");
     return;
 }
 
